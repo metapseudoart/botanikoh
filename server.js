@@ -3,17 +3,15 @@ const OpenAI = require('openai');
 const cors = require('cors');
 
 const app = express();
-app.use(cors()); // Позволяет запросам с других доменов (например, с твоего сайта на Framer) доходить до сервера
+app.use(cors());
 app.use(express.json());
 
-// ВАЖНО: Ключ API будет безопасно храниться в переменных окружения на Render
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
 // --- НАША БАЗА ДАННЫХ ЦВЕТОВ ---
 const flowerData = {
-    // ... (сюда можно будет добавлять твои цветы)
     'Rose Pink O\'Hara': { price: 100, style: ['Romantic', 'Classic'] },
     'Rose Caramel': { price: 60, style: ['Classic', 'Vibrant'] },
     'Spray Rose': { price: 60, style: ['Romantic'] },
@@ -32,8 +30,13 @@ function calculateComposition(budget, style) {
     const composition = {};
 
     const suitableFlowers = Object.keys(flowerData).filter(f => flowerData[f].style.includes(style));
+    
+    // ИЗМЕНЕНИЕ: Проверка, что подходящие цветы вообще есть
+    if (suitableFlowers.length === 0) {
+        return {}; // Возвращаем пустой объект, если не нашли цветов для этого стиля
+    }
 
-    for (let i = 0; i < 10; i++) { // Сделаем 10 итераций для наполнения букета
+    for (let i = 0; i < 15; i++) { // Увеличим количество итераций для более пышных букетов
         const flowerName = suitableFlowers[Math.floor(Math.random() * suitableFlowers.length)];
         const flower = flowerData[flowerName];
 
@@ -49,11 +52,13 @@ function createPrompt(composition, style, occasion, packaging) {
     const compositionString = Object.entries(composition)
         .map(([name, count]) => `${count} ${name}`)
         .join(', ');
-    
-    return `Photorealistic studio quality photo. A beautiful, ${style.toLowerCase()} flower bouquet for a ${occasion.toLowerCase()}. 
-    The composition must include: ${compositionString}. 
-    The bouquet is wrapped in ${packaging.color.toLowerCase()} ${packaging.type.toLowerCase()}. 
-    Clean, professional lighting on a neutral background. Focus on the texture and details of the flowers.`;
+
+    // ИЗМЕНЕНИЕ: "Защита от дурака" - если композиция пуста, создаем более общий промпт
+    if (!compositionString) {
+        return `Photorealistic studio quality photo. A beautiful, ${style.toLowerCase()} flower bouquet for a ${occasion.toLowerCase()}, based on the florist's choice. The bouquet is wrapped in ${packaging.color.toLowerCase()} ${packaging.type.toLowerCase()}. Clean, professional lighting on a neutral background.`;
+    }
+
+    return `Photorealistic studio quality photo. A beautiful, ${style.toLowerCase()} flower bouquet for a ${occasion.toLowerCase()}. The composition must include: ${compositionString}. The bouquet is wrapped in ${packaging.color.toLowerCase()} ${packaging.type.toLowerCase()}. Clean, professional lighting on a neutral background. Focus on the texture and details of the flowers.`;
 }
 
 // --- НАШ API ЭНДПОИНТ ---
@@ -65,29 +70,31 @@ app.post('/generate-bouquet', async (req, res) => {
             return res.status(400).json({ message: "Missing required parameters." });
         }
 
-        // 1. Рассчитываем состав
         const composition = calculateComposition(budget, style);
-
-        // 2. Создаем промпт
         const prompt = createPrompt(composition, style, occasion, packaging);
 
-        // 3. Отправляем запрос в OpenAI
+        // НОВОЕ ИЗМЕНЕНИЕ: Логгируем промпт перед отправкой! Это супер-важно для отладки.
+        console.log('--- GENERATING PROMPT ---', prompt);
+
         const response = await openai.images.generate({
             model: "dall-e-3",
             prompt: prompt,
             n: 1,
             size: "1024x1024",
-            quality: "standard",
+            quality: "standard", // Используем standard, чтобы было быстрее и дешевле для тестов
         });
 
         const imageUrl = response.data[0].url;
-
-        // 4. Отправляем URL картинки обратно на сайт
         res.json({ imageUrl });
 
     } catch (error) {
-        console.error("Error generating bouquet:", error);
-        res.status(500).json({ message: "Failed to generate image." });
+        // Улучшенное логгирование ошибок
+        console.error("--- ERROR ---");
+        console.error("Error Message:", error.message);
+        console.error("Error Type:", error.type);
+        console.error("Error Details:", error);
+        console.error("--- END ERROR ---");
+        res.status(500).json({ message: "Failed to generate image due to an internal error." });
     }
 });
 
