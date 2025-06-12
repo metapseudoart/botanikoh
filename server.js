@@ -8,7 +8,7 @@ app.use(express.json());
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// --- НАША БАЗА ДАННЫХ ЦВЕТОВ ---
+// --- БАЗА ДАННЫХ ЦВЕТОВ ---
 const flowerData = {
     'Rose Pink OHara': { price: 100, style: ['Romantic', 'Classic'] },
     'Rose Caramel': { price: 60, style: ['Classic', 'Vibrant'] },
@@ -26,13 +26,37 @@ const flowerData = {
     'Greenery (Eucalyptus, Ruscus)': { price: 20, style: ['Romantic', 'Classic', 'Vibrant', 'Minimalism', 'Tropical'] },
 };
 
-function calculateComposition(budget, style) {
-    let remainingBudget = budget * 0.7;
-    const composition = {};
-    const suitableFlowers = Object.keys(flowerData).filter(f => flowerData[f].style.includes(style));
-    if (suitableFlowers.length === 0) return {};
+// --- НОВАЯ ЛОГИКА ---
 
-    const iterations = style === 'Minimalism' ? 5 : (style === 'Tropical' ? 20 : 15);
+// 1. Определяем "уровень" букета по бюджету
+function getBudgetTier(budget) {
+    if (budget <= 1200) return 'Small';
+    if (budget <= 3500) return 'Medium';
+    return 'Lush';
+}
+
+// 2. Подбираем состав с учетом цены и уровня
+function calculateComposition(budget, style, tier) {
+    let remainingBudget = budget * 0.7; // 70% бюджета на цветы
+    const composition = {};
+
+    // Устанавливаем лимит цены цветка в зависимости от уровня бюджета
+    const priceLimit = tier === 'Small' ? 80 : (tier === 'Medium' ? 150 : 1000);
+
+    const suitableFlowers = Object.keys(flowerData).filter(f => {
+        const flower = flowerData[f];
+        return flower.style.includes(style) && flower.price <= priceLimit;
+    });
+
+    if (suitableFlowers.length === 0) {
+        // Если для Small-букета ничего не нашлось, попробуем взять что-то дороже
+        const fallbackFlowers = Object.keys(flowerData).filter(f => flowerData[f].style.includes(style));
+        if (fallbackFlowers.length > 0) suitableFlowers.push(fallbackFlowers[0]);
+        else return {};
+    }
+
+    // Количество "проходов" зависит от уровня, чтобы букеты были разного размера
+    const iterations = tier === 'Small' ? 8 : (tier === 'Medium' ? 15 : 25);
 
     for (let i = 0; i < iterations; i++) {
         const flowerName = suitableFlowers[Math.floor(Math.random() * suitableFlowers.length)];
@@ -42,79 +66,75 @@ function calculateComposition(budget, style) {
             remainingBudget -= flower.price;
         }
     }
-    if (style === 'Minimalism' && Object.keys(composition).length > 3) {
-        const minimalComposition = {};
-        Object.entries(composition).slice(0, 3).forEach(([name, count]) => {
-            minimalComposition[name] = count;
-        });
-        return minimalComposition;
-    }
     return composition;
 }
 
+// 3. Создаем текст для упаковки
 function getPackagingString(packaging) {
     switch (packaging.type) {
-        case 'Craft Paper':
-            return 'wrapped in natural brown craft paper';
-        case 'Ribbon Only':
-            return 'hand-tied with an elegant silk ribbon, leaving the stems exposed';
-        case 'None':
-            return 'with no packaging, presented as a simple hand-tied bouquet';
-        case 'Korean Paper':
-        default:
-            return `wrapped in ${packaging.color.toLowerCase()} Korean waterproof paper`;
+        case 'Craft Paper': return 'wrapped in natural brown craft paper';
+        case 'Ribbon Only': return 'hand-tied with an elegant silk ribbon, leaving the stems exposed';
+        case 'None': return 'with no packaging, presented as a simple hand-tied bouquet';
+        case 'Korean Paper': default: return `wrapped in ${packaging.color.toLowerCase()} Korean waterproof paper`;
     }
 }
 
-// --- УЛУЧШЕННЫЙ ПРОМПТ-ИНЖЕНЕР "АРТ-ДИРЕКТОР" ---
-function createPrompt(composition, style, occasion, packaging) {
+// 4. Создаем "Арт-директорский" промпт с учетом размера
+function createPrompt(composition, style, occasion, packaging, tier) {
     const compositionString = Object.entries(composition).map(([name, count]) => `${count} ${name}`).join(', ');
     const packagingString = getPackagingString(packaging);
-    
-    // Определяем основной тон промпта
-    const basePrompt = `Award-winning professional product photography of a beautiful, artistic, ${style.toLowerCase()} flower bouquet for a ${occasion.toLowerCase()}.`;
 
-    // Детали композиции
-    const compositionDetails = compositionString 
-        ? `The composition focuses on these primary flowers: ${compositionString}.` 
-        : `The composition is an elegant mix of flowers chosen by a master florist.`;
-    
-    // Детали камеры и освещения для максимального реализма
+    let sizeDescriptor = '';
+    switch (tier) {
+        case 'Small': sizeDescriptor = 'a delicate and modest'; break;
+        case 'Medium': sizeDescriptor = 'a beautiful and well-balanced'; break;
+        case 'Lush': sizeDescriptor = 'a large, abundant and luxurious'; break;
+        default: sizeDescriptor = 'a beautiful';
+    }
+
+    const basePrompt = `Award-winning professional product photography of ${sizeDescriptor} ${style.toLowerCase()} flower bouquet for a ${occasion.toLowerCase()}.`;
+    const compositionDetails = compositionString ? `The composition focuses on these primary flowers: ${compositionString}.` : `The composition is an elegant mix of flowers chosen by a master florist.`;
     const technicalDetails = `Shot on a Canon EOS R5 camera with a 85mm f/1.2L lens, resulting in an extremely sharp focus and a beautifully blurred background (bokeh). The lighting is soft and cinematic, with professional studio lights creating gentle highlights and deep, soft shadows, enhancing the 3D quality and texture of every petal.`;
-
-    // Детали цветов и финальный штрих
     const colorAndRealismDetails = `The colors are rich, vibrant, and true-to-life, with professional color grading. The image is hyperrealistic, highly detailed, and exudes a feeling of luxury and elegance.`;
 
     const fullPrompt = [basePrompt, compositionDetails, `The bouquet is ${packagingString}.`, technicalDetails, colorAndRealismDetails].join(' ');
-
     return fullPrompt;
 }
 
+
+// --- ГЛАВНЫЙ ЭНДПОИНТ ---
 app.post('/generate-bouquet', async (req, res) => {
     try {
         const { budget, style, occasion, packaging } = req.body;
         if (!budget || !style || !occasion || !packaging) {
             return res.status(400).json({ message: "Missing required parameters." });
         }
-        const composition = calculateComposition(budget, style);
-        const prompt = createPrompt(composition, style, occasion, packaging);
 
-        console.log('--- GENERATING PROMPT V2 (Art Director) ---', prompt);
+        // Вызываем всю нашу новую логику
+        const tier = getBudgetTier(budget);
+        const composition = calculateComposition(budget, style, tier);
+        const prompt = createPrompt(composition, style, occasion, packaging, tier);
+
+        // Логгируем, чтобы видеть в Render, что происходит
+        console.log(`--- TIER: ${tier} --- GENERATING PROMPT V3 (Budget-aware) ---`);
+        console.log(prompt);
 
         const response = await openai.images.generate({ 
             model: "dall-e-3", 
             prompt, 
             n: 1, 
             size: "1024x1024", 
-            quality: "hd", // <-- HD качество для большей детализации
-            style: "vivid"  // <-- Яркие, насыщенные цвета
+            quality: "hd", 
+            style: "vivid" 
         });
         res.json({ imageUrl: response.data[0].url });
+
     } catch (error) {
-        console.error("Error generating bouquet:", error);
-        res.status(500).json({ message: "Failed to generate image." });
+        console.error("--- ERROR ---", error.message);
+        res.status(500).json({ message: "Failed to generate image. Please check server logs." });
     }
 });
 
+// --- ЗАПУСК СЕРВЕРА ---
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
