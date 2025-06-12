@@ -8,9 +8,9 @@ app.use(express.json());
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// --- ОБНОВЛЕННАЯ БАЗА ЦВЕТОВ ---
+// --- НАША БАЗА ДАННЫХ ЦВЕТОВ ---
 const flowerData = {
-    'Rose Pink O\'Hara': { price: 100, style: ['Romantic', 'Classic'] },
+    'Rose Pink OHara': { price: 100, style: ['Romantic', 'Classic'] },
     'Rose Caramel': { price: 60, style: ['Classic', 'Vibrant'] },
     'Spray Rose': { price: 60, style: ['Romantic', 'Classic'] },
     'Chrysanthemum': { price: 40, style: ['Classic', 'Vibrant'] },
@@ -32,7 +32,6 @@ function calculateComposition(budget, style) {
     const suitableFlowers = Object.keys(flowerData).filter(f => flowerData[f].style.includes(style));
     if (suitableFlowers.length === 0) return {};
 
-    // Для минимализма делаем меньше итераций, для тропического - больше
     const iterations = style === 'Minimalism' ? 5 : (style === 'Tropical' ? 20 : 15);
 
     for (let i = 0; i < iterations; i++) {
@@ -43,7 +42,6 @@ function calculateComposition(budget, style) {
             remainingBudget -= flower.price;
         }
     }
-    // Если в минимализме слишком много цветов, урежем до 2-3 видов
     if (style === 'Minimalism' && Object.keys(composition).length > 3) {
         const minimalComposition = {};
         Object.entries(composition).slice(0, 3).forEach(([name, count]) => {
@@ -54,7 +52,6 @@ function calculateComposition(budget, style) {
     return composition;
 }
 
-// Умный генератор текста для упаковки
 function getPackagingString(packaging) {
     switch (packaging.type) {
         case 'Craft Paper':
@@ -69,15 +66,28 @@ function getPackagingString(packaging) {
     }
 }
 
+// --- УЛУЧШЕННЫЙ ПРОМПТ-ИНЖЕНЕР "АРТ-ДИРЕКТОР" ---
 function createPrompt(composition, style, occasion, packaging) {
     const compositionString = Object.entries(composition).map(([name, count]) => `${count} ${name}`).join(', ');
     const packagingString = getPackagingString(packaging);
+    
+    // Определяем основной тон промпта
+    const basePrompt = `Award-winning professional product photography of a beautiful, artistic, ${style.toLowerCase()} flower bouquet for a ${occasion.toLowerCase()}.`;
 
-    if (!compositionString) {
-        return `Photorealistic studio quality photo. A beautiful, ${style.toLowerCase()} flower bouquet for a ${occasion.toLowerCase()}, based on the florist's choice. The bouquet is ${packagingString}. Clean, professional lighting on a neutral background.`;
-    }
+    // Детали композиции
+    const compositionDetails = compositionString 
+        ? `The composition focuses on these primary flowers: ${compositionString}.` 
+        : `The composition is an elegant mix of flowers chosen by a master florist.`;
+    
+    // Детали камеры и освещения для максимального реализма
+    const technicalDetails = `Shot on a Canon EOS R5 camera with a 85mm f/1.2L lens, resulting in an extremely sharp focus and a beautifully blurred background (bokeh). The lighting is soft and cinematic, with professional studio lights creating gentle highlights and deep, soft shadows, enhancing the 3D quality and texture of every petal.`;
 
-    return `Photorealistic studio quality photo. A beautiful, ${style.toLowerCase()} flower bouquet for a ${occasion.toLowerCase()}. The composition focuses on these primary flowers: ${compositionString}. The bouquet is ${packagingString}. Clean, professional lighting on a neutral background. Focus on texture and detail.`;
+    // Детали цветов и финальный штрих
+    const colorAndRealismDetails = `The colors are rich, vibrant, and true-to-life, with professional color grading. The image is hyperrealistic, highly detailed, and exudes a feeling of luxury and elegance.`;
+
+    const fullPrompt = [basePrompt, compositionDetails, `The bouquet is ${packagingString}.`, technicalDetails, colorAndRealismDetails].join(' ');
+
+    return fullPrompt;
 }
 
 app.post('/generate-bouquet', async (req, res) => {
@@ -89,9 +99,16 @@ app.post('/generate-bouquet', async (req, res) => {
         const composition = calculateComposition(budget, style);
         const prompt = createPrompt(composition, style, occasion, packaging);
 
-        console.log('--- GENERATING PROMPT ---', prompt);
+        console.log('--- GENERATING PROMPT V2 (Art Director) ---', prompt);
 
-        const response = await openai.images.generate({ model: "dall-e-3", prompt, n: 1, size: "1024x1024", quality: "standard" });
+        const response = await openai.images.generate({ 
+            model: "dall-e-3", 
+            prompt, 
+            n: 1, 
+            size: "1024x1024", 
+            quality: "hd", // <-- HD качество для большей детализации
+            style: "vivid"  // <-- Яркие, насыщенные цвета
+        });
         res.json({ imageUrl: response.data[0].url });
     } catch (error) {
         console.error("Error generating bouquet:", error);
