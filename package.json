@@ -1,14 +1,14 @@
 {
-  "name": "bouquet-generator-api",
+  "name": "botanikoh-google-api",
   "version": "1.0.0",
-  "description": "API to generate bouquets",
+  "description": "API to generate bouquets with Google Imagen",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "@google-cloud/vertexai": "^1.1.0",
     "express": "^4.19.2",
-    "openai": "^4.52.0",
     "cors": "^2.8.5"
   }
 }
